@@ -1,0 +1,25 @@
+/* Style for the selection box (using class now) */
+.freeform-selection-box-internal { /* Changed from #freeform-selection-box */
+  position: absolute; /* Position relative to the document OF THE FRAME */
+  border: 2px dashed #007bff;
+  background-color: rgba(0, 123, 255, 0.1);
+  /* Ensure high z-index *within its frame context* */
+  z-index: 2147483646;
+  pointer-events: none;
+  box-sizing: border-box;
+  display: none;
+}
+
+/* Change cursor when selection mode is active globally */
+body.selection-active {
+  cursor: crosshair !important;
+}
+
+/* Override cursor for specific elements if needed */
+body.selection-active a,
+body.selection-active button,
+body.selection-active input,
+body.selection-active textarea,
+body.selection-active select {
+   cursor: crosshair !important;
+}
