@@ -1,3 +1,27 @@
+function injectPreventSelectStyle() {
+    const styleId = 'cs-prevent-select-style';
+    if (document.getElementById(styleId)) return; // Already injected
+
+    const css = `
+    body.cs-prevent-select {
+      -webkit-user-select: none; /* Safari */
+      -moz-user-select: none;    /* Firefox */
+      -ms-user-select: none;     /* IE/Edge */
+      user-select: none;         /* Standard */
+      /* Optional: Consider adding a cursor style if needed */
+      /* cursor: crosshair !important; */
+    }
+  `;
+
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = css;
+    (document.head || document.documentElement).appendChild(style);
+    console.log("CS: Injected prevent-select style.");
+}
+
+injectPreventSelectStyle(); // Call it once when the script loads
+
 // --- State Variables (per frame instance) ---
 // ... (keep existing state variables: isSelectionAvailableGlobally, etc.) ...
 let isSelectionAvailableGlobally = false;
@@ -35,7 +59,6 @@ function makeSelectionUnavailable() {
     }
 }
 
-
 // --- Event Handlers ---
 // ... (keep existing handleMouseDown, handleMouseMove) ...
 function handleMouseDown(event) {
@@ -46,6 +69,11 @@ function handleMouseDown(event) {
             if (response?.canProceed) {
                 console.log("CS: Background confirmed, starting selection in this frame.");
                 isCurrentlySelectingInThisFrame = true; isDragging = true; canThisFrameListenForMouseDown = false;
+
+                // ***** ADD CLASS TO PREVENT HIGHLIGHTING *****
+                document.body.classList.add('cs-prevent-select');
+                // ********************************************
+
                 event.preventDefault(); event.stopPropagation();
                 startX = event.pageX; startY = event.pageY; // Document coords
                 initSelectionBox(); // Creates box in *this* frame
@@ -77,12 +105,17 @@ function handleMouseMove(event) {
 
 // --- MOUSE UP (Needs adjustment to pass Viewport Rect) ---
 function handleMouseUp(event) {
-    if (!isDragging) return;
+    // ***** REMOVE CLASS TO RE-ENABLE HIGHLIGHTING *****
+    // Do this *before* checking isDragging, to ensure it's always removed on mouseup
+    document.body.classList.remove('cs-prevent-select');
+    // *************************************************
+
+    if (!isDragging) return; // Check isDragging *after* removing the class
 
     event.preventDefault(); event.stopPropagation();
     console.log("CS: MouseUp detected, ending selection drag.");
 
-    isDragging = false;
+    isDragging = false; // Update state *after* checking if we were dragging
     document.removeEventListener('mousemove', handleMouseMove, true);
     document.removeEventListener('mouseup', handleMouseUp, true);
 
@@ -92,6 +125,7 @@ function handleMouseUp(event) {
     if (!selectionViewportRect || selectionViewportRect.width <= 2 || selectionViewportRect.height <= 2) {
         console.log("CS: Selection too small or box not found.");
         cancelSelectionDrag(true); // Cancel and notify background immediately
+        // Note: cancelSelectionDrag will also attempt removal, which is harmless
         return;
     }
 
@@ -134,6 +168,12 @@ function handleMouseUp(event) {
 // --- Helper: Cancel Drag (Add optional background notification) ---
 function cancelSelectionDrag(notifyBackground = false) {
     console.log("CS: Cancelling active selection drag.");
+
+    // ***** REMOVE CLASS TO RE-ENABLE HIGHLIGHTING *****
+    // Add this here too, in case selection is cancelled other ways
+    document.body.classList.remove('cs-prevent-select');
+    // *************************************************
+
     const wasSelecting = isCurrentlySelectingInThisFrame || isDragging;
     isDragging = false;
     isCurrentlySelectingInThisFrame = false;
@@ -169,175 +209,231 @@ function initSelectionBox() {
 
 
 // --- Text Extraction (MAJOR CHANGES using caretRangeFromPoint) ---
-function rectsIntersect(r1, r2) { // Works for both viewport and document if consistent
-  return !(r2.left >= r1.right || r2.right <= r1.left || r2.top >= r1.bottom || r2.bottom <= r1.top);
-}
+// function rectsIntersect(r1, r2) { // Works for both viewport and document if consistent
+//   return !(r2.left >= r1.right || r2.right <= r1.left || r2.top >= r1.bottom || r2.bottom <= r1.top);
+// }
 
-// ** Takes VIEWPORT selection rectangle **
-function extractTextInBox(selectionViewportRect) {
+/**
+ * Extracts *visible* text *precisely* within a given viewport rectangle.
+ * Iterates through text nodes, checks visibility and intersection,
+ * then uses caretPositionFromPoint on the intersection corners
+ * to clip the text within each node accurately. Handles wrapped nodes
+ * creating multiple fragments. Treats fragment text as single-line,
+ * adding newlines based only on vertical gaps between fragments.
+ * Removes resulting empty or whitespace-only lines.
+ *
+ * @param {DOMRect | {top: number, left: number, bottom: number, right: number}} selectionViewportRect - The selection rectangle in viewport coordinates.
+ * @param {number} [lineBreakThreshold=5] - Approx vertical pixel gap to trigger a newline.
+ * @returns {string} The extracted text.
+ */
+function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
     console.log("CS: Extracting text within viewport rect:", selectionViewportRect);
-    const fragments = []; // Store { text: "substring", rect: viewportRect }
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+    const fragments = []; // Store { text: "substring", rect: nodeViewportRect }
+
+    if (!selectionViewportRect || selectionViewportRect.width <= 0 || selectionViewportRect.height <= 0) {
+        console.warn("CS: Invalid or zero-area selection rectangle.");
+        return "";
+    }
+
+    const walker = document.createTreeWalker(
+        document.body,
+        NodeFilter.SHOW_TEXT,
+        null,
+        false
+    );
+
     let node;
+    const docWidth = document.documentElement.clientWidth;
+    const docHeight = document.documentElement.clientHeight;
 
     while (node = walker.nextNode()) {
-        if (!node.nodeValue || node.nodeValue.trim() === '') continue;
+        if (!node.nodeValue || node.nodeValue.trim().length === 0) {
+            continue;
+        }
 
+        // --- Visibility Check (same as before) ---
         const parentElement = node.parentElement;
         if (!parentElement) continue;
-        const parentStyle = window.getComputedStyle(parentElement);
-        if (parentStyle.display === 'none' || parentStyle.visibility === 'hidden' || parentStyle.opacity === '0') continue;
+        let elementToCheck = parentElement;
+        let isVisible = true;
+        try {
+            while (elementToCheck && elementToCheck !== document.body) {
+                const elemRect = elementToCheck.getBoundingClientRect();
+                if (elemRect.width === 0 || elemRect.height === 0) {
+                    isVisible = false;
+                    break;
+                }
+                const style = window.getComputedStyle(elementToCheck);
+                if (!style || style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') === 0) {
+                    isVisible = false;
+                    break;
+                }
+                if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(elementToCheck.tagName)) {
+                    isVisible = false;
+                    break;
+                }
+                elementToCheck = elementToCheck.parentElement;
+            }
+        } catch (e) {
+            console.warn("CS: Error checking visibility for node", node, e);
+            isVisible = false;
+        }
+        if (!isVisible) continue;
+        // --- End Visibility Check ---
 
+
+        // --- Intersection and Clipping ---
         const range = document.createRange();
         range.selectNodeContents(node);
-        const nodeViewportRects = range.getClientRects(); // Use viewport rects
+        const nodeViewportRects = range.getClientRects();
 
+        // !! Iterate ALL rects for this node, don't break early !!
         for (let i = 0; i < nodeViewportRects.length; i++) {
             const nodeViewportRect = nodeViewportRects[i];
 
-            // Check intersection between selection (viewport) and text node part (viewport)
             if (nodeViewportRect.width > 0 && nodeViewportRect.height > 0 &&
                 rectsIntersect(selectionViewportRect, nodeViewportRect))
             {
-                // Calculate the actual intersection rectangle (in viewport coordinates)
+                // Calculate intersection (same as before)
                 const intersectTop = Math.max(selectionViewportRect.top, nodeViewportRect.top);
                 const intersectLeft = Math.max(selectionViewportRect.left, nodeViewportRect.left);
                 const intersectBottom = Math.min(selectionViewportRect.bottom, nodeViewportRect.bottom);
                 const intersectRight = Math.min(selectionViewportRect.right, nodeViewportRect.right);
 
-                // Use caretRangeFromPoint to find the precise text range
-                // Add small epsilon to avoid landing exactly on boundaries sometimes
-                const startX = intersectLeft + 0.1;
-                const startY = intersectTop + 0.1;
-                const endX = intersectRight - 0.1;
-                const endY = intersectBottom - 0.1;
+                if (intersectRight <= intersectLeft || intersectBottom <= intersectTop) continue;
 
-                let startRange, endRange;
+                // Get precise offsets using caretPositionFromPoint (same as before)
+                const startX = Math.max(0, Math.min(docWidth - 1, intersectLeft + 0.1));
+                const startY = Math.max(0, Math.min(docHeight - 1, intersectTop + 0.1));
+                const endX = Math.max(0, Math.min(docWidth - 1, intersectRight - 0.1));
+                const endY = Math.max(0, Math.min(docHeight - 1, intersectBottom - 0.1));
+
+                let startOffset = 0;
+                let endOffset = node.nodeValue.length;
+
                 try {
-                    // 1. Use the modern API to get CaretPosition objects, replacing caretRangeFromPoint which is deprecated
                     const startPos = document.caretPositionFromPoint(startX, startY);
                     const endPos = document.caretPositionFromPoint(endX, endY);
-
-                    // 2. Check if the API returned valid positions (it returns null on failure)
-                    if (!startPos || !endPos) {
-                        // Handle the failure case - equivalent to the old catch block's purpose
-                        console.warn("CS: caretPositionFromPoint returned null (possibly off-screen or non-text area)");
-                        continue; // Skip this rectangle if points fail
+                     // Determine offsets relative to the current node (same logic as before)
+                     if (startPos && startPos.offsetNode === node) {
+                        startOffset = startPos.offset;
+                    } else if (startPos && range.comparePoint(startPos.offsetNode, startPos.offset) === -1) {
+                        startOffset = 0;
+                    } else {
+                         if (!startPos) console.warn("CS: caretPositionFromPoint returned null for start of intersection", {startX, startY, node: node.nodeValue});
+                         startOffset = 0; // Fallback
                     }
-
-                    // 3. Create collapsed Range objects from the CaretPosition data
-                    startRange = document.createRange();
-                    // Set both start and end to the same point to create a collapsed range
-                    startRange.setStart(startPos.offsetNode, startPos.offset);
-                    startRange.setEnd(startPos.offsetNode, startPos.offset); // or startRange.collapse(true);
-
-                    endRange = document.createRange();
-                    // Set both start and end to the same point
-                    endRange.setStart(endPos.offsetNode, endPos.offset);
-                    endRange.setEnd(endPos.offsetNode, endPos.offset); // or endRange.collapse(true);
-
-                    // Now startRange and endRange are Range objects, just like before,
-                    // representing the caret positions closest to the start/end coordinates.
-
+                    if (endPos && endPos.offsetNode === node) {
+                        endOffset = endPos.offset;
+                    } else if (endPos && range.comparePoint(endPos.offsetNode, endPos.offset) === 1) {
+                         endOffset = node.nodeValue.length;
+                    } else {
+                         if (!endPos) console.warn("CS: caretPositionFromPoint returned null for end of intersection", {endX, endY, node: node.nodeValue});
+                         endOffset = node.nodeValue.length; // Fallback
+                    }
+                    if (startOffset > endOffset) {
+                         [startOffset, endOffset] = [endOffset, startOffset];
+                    }
                 } catch (e) {
-                    // Keep a general catch block for any unexpected errors during range creation etc.
-                    console.error("CS: Error processing caret positions or creating ranges", e);
-                    continue; // Skip this rectangle on other errors
+                    console.error("CS: Error using caretPositionFromPoint within intersection", e, {node: node.nodeValue, startX, startY, endX, endY});
+                    continue; // Skip this rect on error
                 }
 
+                // Extract the substring
+                if (startOffset < endOffset) {
+                    const rawSubstring = node.nodeValue.substring(startOffset, endOffset);
 
-                if (startRange && endRange) {
-                    // Create a new range covering the intersection
-                    const selectedRange = document.createRange();
+                    // !! Clean the substring: replace newlines/tabs with spaces, trim !!
+                    const cleanedSubstring = rawSubstring.replace(/[\n\r\t]+/g, ' ').trim();
 
-                    // --- Crucial Validation ---
-                    // Ensure the points landed within the *current* text node or its children
-                    // This check might be too restrictive if caretRange lands slightly outside,
-                    // but helps prevent grabbing text from adjacent nodes accidentally.
-                    // A simpler check: are containers the same text node?
-                    if (startRange.startContainer === node && endRange.startContainer === node) {
-                         // Common case: both points land within the same text node
-                         selectedRange.setStart(node, startRange.startOffset);
-                         selectedRange.setEnd(node, endRange.startOffset); // Use startOffset from endRange
+                    // Only add if the cleaned substring is not empty
+                    if (cleanedSubstring.length > 0) {
+                        fragments.push({
+                            text: cleanedSubstring, // Store the cleaned, single-line text
+                            rect: { // Store the rect of *this specific* clientRect
+                                top: nodeViewportRect.top,
+                                left: nodeViewportRect.left,
+                                bottom: nodeViewportRect.bottom,
+                                right: nodeViewportRect.right,
+                                width: nodeViewportRect.width,
+                                height: nodeViewportRect.height
+                            }
+                        });
+                        // !! REMOVED the break; statement here !!
                     }
-                    else {
-                         // More complex case: points might land in different nodes if near boundary,
-                         // or if the intersection spans elements inside the main node (unlikely for pure text nodes).
-                         // We'll try setting boundaries directly, but prioritize the current node.
-                         // If the container isn't our node, maybe take offset 0 or node.length?
-
-                         // Simplified: Only proceed if *both* containers seem related to our node.
-                         // A truly robust solution here is very complex. Let's stick to the common case.
-                         // If containers differ, we likely have an edge case or error.
-                         console.warn("CS: Start/End containers differ or not the current node. Skipping fragment.", node, startRange.startContainer, endRange.startContainer);
-                         continue; // Skip this fragment for now
-                    }
-
-
-                    // Ensure start does not come after end
-                    if (!selectedRange.collapsed) { // Check if start <= end implicitly
-                        const extractedSubstring = selectedRange.toString();
-                        if (extractedSubstring.trim() !== '') {
-                             fragments.push({
-                                 text: extractedSubstring,
-                                 // Store the viewport rect of the *text node part* for sorting
-                                 rect: { top: nodeViewportRect.top, left: nodeViewportRect.left, bottom: nodeViewportRect.bottom, right: nodeViewportRect.right }
-                             });
-                        }
-                    }
-                     selectedRange.detach();
                 }
-                 // Detach temporary ranges if they exist
-                 // Note: Ranges created by caretRangeFromPoint might not need explicit detach
             }
-        }
-        range.detach(); // Clean up main node range
-    }
+        } // End loop over nodeViewportRects
+        range.detach();
+    } // End while loop over nodes
 
+    // --- Sorting (same as before) ---
     if (fragments.length === 0) {
         return "";
     }
-
-    // Sort fragments based on VIEWPORT coordinates
     fragments.sort((a, b) => {
-        if (Math.abs(a.rect.top - b.rect.top) > LINE_BREAK_THRESHOLD_VERTICAL) {
-            return a.rect.top - b.rect.top;
-        } else {
-            return a.rect.left - b.rect.left;
-        }
+        const verticalThreshold = Math.min(a.rect.height, b.rect.height) * 0.5;
+        if (a.rect.top < b.rect.top - verticalThreshold) return -1;
+        if (b.rect.top < a.rect.top - verticalThreshold) return 1;
+        return a.rect.left - b.rect.left;
     });
 
-    // Merge fragments (logic remains similar, using viewport rects now)
-    let extractedText = "";
-    let lastFragBottom = -Infinity;
+    // --- Merge Fragments, Adding Breaks based *only* on Vertical Gaps ---
+    let mergedLines = []; // Store lines as they are built
+    let currentLine = ""; // The line currently being built
 
     fragments.forEach((frag, index) => {
-        // Check for newline based on vertical gap
-        if (index > 0) {
-             const prevFrag = fragments[index - 1];
-             // Use bottom of previous rect for better line grouping check
-             if (frag.rect.top > (prevFrag.rect.bottom - LINE_BREAK_THRESHOLD_VERTICAL / 2) && // Vertically distinct enough
-                 frag.rect.top - prevFrag.rect.bottom > LINE_BREAK_THRESHOLD_VERTICAL) // Significantly lower
-             {
-                 extractedText += "\n";
-             }
-             // Check for space based on horizontal gap on same visual line
-             else if (Math.abs(frag.rect.top - prevFrag.rect.top) <= LINE_BREAK_THRESHOLD_VERTICAL) { // Same line check
-                 if (frag.rect.left > prevFrag.rect.right + 1) { // Horizontal gap (tolerance 1px)
-                    // Avoid double spaces if previous already ends with one
-                    if (!extractedText.endsWith(' ') && !extractedText.endsWith('\n')) {
-                         extractedText += " ";
-                    }
-                 }
-             }
-        }
+        if (index === 0) {
+            // Start the first line
+            currentLine = frag.text;
+        } else {
+            const lastFrag = fragments[index - 1];
+            const verticalGap = frag.rect.top - lastFrag.rect.bottom;
+            const horizontalGap = frag.rect.left - lastFrag.rect.right;
 
-        extractedText += frag.text; // Add the extracted substring
-        lastFragBottom = Math.max(lastFragBottom, frag.rect.bottom); // Update for next iteration
+            // Check if it's a new visual line based on vertical gap
+            const isNewLine = verticalGap > -lineBreakThreshold; // True if clear gap or minor overlap
+
+            if (isNewLine) {
+                // Finish the previous line
+                mergedLines.push(currentLine);
+                // Start the new line with the current fragment's text
+                currentLine = frag.text;
+            } else {
+                // Continue on the same visual line
+                // Add a space if there's a horizontal gap
+                if (horizontalGap > 1) {
+                    currentLine += " ";
+                }
+                // Append the current fragment's text
+                currentLine += frag.text;
+            }
+        }
     });
 
-    console.log("CS Extracted (partial):", extractedText.substring(0,100) + "...");
-    return extractedText; // No final trim needed as fragments should be precise
+    // Add the last line being built
+    if (currentLine.length > 0) {
+         mergedLines.push(currentLine);
+    }
+
+
+    // --- Post-processing: Filter already-trimmed lines (redundant check but safe) and join ---
+    // Since fragments were trimmed and merging logic adds spaces correctly,
+    // filtering might not be strictly needed unless merging somehow creates whitespace-only lines.
+    // Let's keep it for robustness.
+    const cleanedLines = mergedLines.filter(line => line.trim().length > 0);
+    const finalExtractedText = cleanedLines.join('\n');
+
+    console.log("CS Extracted (Cleaned, Single-Line Fragments):", finalExtractedText);
+    return finalExtractedText;
+}
+
+// Helper function (ensure you have this)
+function rectsIntersect(r1, r2) {
+    return !(r2.left >= r1.right ||
+             r2.right <= r1.left ||
+             r2.top >= r1.bottom ||
+             r2.bottom <= r1.top);
 }
 
 
