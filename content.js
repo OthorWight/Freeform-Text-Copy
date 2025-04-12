@@ -214,11 +214,35 @@ function extractTextInBox(selectionViewportRect) {
 
                 let startRange, endRange;
                 try {
-                    startRange = document.caretRangeFromPoint(startX, startY);
-                    endRange = document.caretRangeFromPoint(endX, endY);
+                    // 1. Use the modern API to get CaretPosition objects, replacing caretRangeFromPoint which is deprecated
+                    const startPos = document.caretPositionFromPoint(startX, startY);
+                    const endPos = document.caretPositionFromPoint(endX, endY);
+
+                    // 2. Check if the API returned valid positions (it returns null on failure)
+                    if (!startPos || !endPos) {
+                        // Handle the failure case - equivalent to the old catch block's purpose
+                        console.warn("CS: caretPositionFromPoint returned null (possibly off-screen or non-text area)");
+                        continue; // Skip this rectangle if points fail
+                    }
+
+                    // 3. Create collapsed Range objects from the CaretPosition data
+                    startRange = document.createRange();
+                    // Set both start and end to the same point to create a collapsed range
+                    startRange.setStart(startPos.offsetNode, startPos.offset);
+                    startRange.setEnd(startPos.offsetNode, startPos.offset); // or startRange.collapse(true);
+
+                    endRange = document.createRange();
+                    // Set both start and end to the same point
+                    endRange.setStart(endPos.offsetNode, endPos.offset);
+                    endRange.setEnd(endPos.offsetNode, endPos.offset); // or endRange.collapse(true);
+
+                    // Now startRange and endRange are Range objects, just like before,
+                    // representing the caret positions closest to the start/end coordinates.
+
                 } catch (e) {
-                    console.warn("CS: caretRangeFromPoint failed (possibly off-screen or non-text area)", e);
-                    continue; // Skip this rectangle if points fail
+                    // Keep a general catch block for any unexpected errors during range creation etc.
+                    console.error("CS: Error processing caret positions or creating ranges", e);
+                    continue; // Skip this rectangle on other errors
                 }
 
 
