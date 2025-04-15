@@ -247,6 +247,7 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
     const docHeight = document.documentElement.clientHeight;
 
     while (node = walker.nextNode()) {
+	const nodeTextPreview = node.nodeValue?.trim().substring(0, 50) + "...";
         if (!node.nodeValue || node.nodeValue.trim().length === 0) {
             continue;
         }
@@ -258,11 +259,11 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
         let isVisible = true;
         try {
             while (elementToCheck && elementToCheck !== document.body) {
-                const elemRect = elementToCheck.getBoundingClientRect();
-                if (elemRect.width === 0 || elemRect.height === 0) {
-                    isVisible = false;
-                    break;
-                }
+                //const elemRect = elementToCheck.getBoundingClientRect();
+                //if (elemRect.width === 0 || elemRect.height === 0) {
+                //    isVisible = false;
+                //    break;
+                //}
                 const style = window.getComputedStyle(elementToCheck);
                 if (!style || style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') === 0) {
                     isVisible = false;
@@ -272,13 +273,19 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
                     isVisible = false;
                     break;
                 }
+		if (elementToCheck.classList.contains('sr-only') || elementToCheck.classList.contains('visually-hidden')) {
+                    isVisible = false; visibilityReason = "Screen Reader Class"; break;
+                }
                 elementToCheck = elementToCheck.parentElement;
             }
         } catch (e) {
             console.warn("CS: Error checking visibility for node", node, e);
             isVisible = false;
         }
-        if (!isVisible) continue;
+        if (!isVisible) {
+	    //console.log(`CS DEBUG: Node skipped visibility): "${nodeTextPreview}"`, elementToCheck);
+	    continue;
+	}
         // --- End Visibility Check ---
 
 
@@ -290,6 +297,7 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
         // !! Iterate ALL rects for this node, don't break early !!
         for (let i = 0; i < nodeViewportRects.length; i++) {
             const nodeViewportRect = nodeViewportRects[i];
+	    //console.log(`CS DEBUG: INTERSECTION FOUND for node "${nodeTextPreview}"`, { nodeRect: nodeViewportRect, selectionRect: selectionViewportRect });
 
             if (nodeViewportRect.width > 0 && nodeViewportRect.height > 0 &&
                 rectsIntersect(selectionViewportRect, nodeViewportRect))
@@ -314,6 +322,7 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
                 try {
                     const startPos = document.caretPositionFromPoint(startX, startY);
                     const endPos = document.caretPositionFromPoint(endX, endY);
+		    //console.log(`CS DEBUG: caretPos results: start=`, startPos, `end=`, endPos);
                      // Determine offsets relative to the current node (same logic as before)
                      if (startPos && startPos.offsetNode === node) {
                         startOffset = startPos.offset;
@@ -334,6 +343,7 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
                     if (startOffset > endOffset) {
                          [startOffset, endOffset] = [endOffset, startOffset];
                     }
+		    //console.log(`CS DEBUG: Calculated offsets: start=${startOffset}, end=${endOffset}`);
                 } catch (e) {
                     console.error("CS: Error using caretPositionFromPoint within intersection", e, {node: node.nodeValue, startX, startY, endX, endY});
                     continue; // Skip this rect on error
@@ -346,8 +356,11 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
                     // !! Clean the substring: replace newlines/tabs with spaces, trim !!
                     const cleanedSubstring = rawSubstring.replace(/[\n\r\t]+/g, ' ').trim();
 
+		    //console.log(`CS DEBUG: Substrings: raw="${rawSubstring}", cleaned="${cleanedSubstring}"`);
+
                     // Only add if the cleaned substring is not empty
                     if (cleanedSubstring.length > 0) {
+			//console.log(`CS DEBUG: ADDING fragment: "${cleanedSubstring}"`);
                         fragments.push({
                             text: cleanedSubstring, // Store the cleaned, single-line text
                             rect: { // Store the rect of *this specific* clientRect
