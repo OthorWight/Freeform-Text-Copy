@@ -213,6 +213,8 @@ function initSelectionBox() {
 //   return !(r2.left >= r1.right || r2.right <= r1.left || r2.top >= r1.bottom || r2.bottom <= r1.top);
 // }
 
+
+
 /**
  * Extracts *visible* text *precisely* within a given viewport rectangle.
  * Iterates through text nodes, checks visibility and intersection,
@@ -221,6 +223,7 @@ function initSelectionBox() {
  * creating multiple fragments. Treats fragment text as single-line,
  * adding newlines based only on vertical gaps between fragments.
  * Removes resulting empty or whitespace-only lines.
+ * Includes special fallback handling for visually selected text in disabled <select> elements.
  *
  * @param {DOMRect | {top: number, left: number, bottom: number, right: number}} selectionViewportRect - The selection rectangle in viewport coordinates.
  * @param {number} [lineBreakThreshold=5] - Approx vertical pixel gap to trigger a newline.
@@ -229,6 +232,7 @@ function initSelectionBox() {
 function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
     console.log("CS: Extracting text within viewport rect:", selectionViewportRect);
     const fragments = []; // Store { text: "substring", rect: nodeViewportRect }
+    const uniqueFragmentKeys = new Set(); // Avoid duplicates from fallback
 
     if (!selectionViewportRect || selectionViewportRect.width <= 0 || selectionViewportRect.height <= 0) {
         console.warn("CS: Invalid or zero-area selection rectangle.");
@@ -247,45 +251,60 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
     const docHeight = document.documentElement.clientHeight;
 
     while (node = walker.nextNode()) {
-	const nodeTextPreview = node.nodeValue?.trim().substring(0, 50) + "...";
+        const nodeTextPreview = node.nodeValue?.trim().substring(0, 50) + "...";
         if (!node.nodeValue || node.nodeValue.trim().length === 0) {
             continue;
         }
 
-        // --- Visibility Check (same as before) ---
+        // --- Visibility Check ---
         const parentElement = node.parentElement;
         if (!parentElement) continue;
+
+        // *** Special Check for Selected Options ***
+        let isSelectedOptionText = false;
+        let associatedSelectElement = null;
+        if (parentElement.tagName === 'OPTION') {
+            associatedSelectElement = parentElement.closest('select');
+            if (associatedSelectElement && parentElement.selected) {
+                isSelectedOptionText = true;
+            }
+        }
+        // ******************************************
+
         let elementToCheck = parentElement;
         let isVisible = true;
+        let visibilityReason = "Passed"; // Track reason for logging
+
         try {
             while (elementToCheck && elementToCheck !== document.body) {
-                //const elemRect = elementToCheck.getBoundingClientRect();
-                //if (elemRect.width === 0 || elemRect.height === 0) {
-                //    isVisible = false;
-                //    break;
-                //}
                 const style = window.getComputedStyle(elementToCheck);
-                if (!style || style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') === 0) {
-                    isVisible = false;
-                    break;
-                }
+                if (!style) { isVisible = false; visibilityReason = "No Computed Style"; break; }
+                if (style.display === 'none') { isVisible = false; visibilityReason = "display: none"; break; }
+                // Relaxed check: Only fail on hidden/opacity if NOT selected option text
+                 if (style.visibility === 'hidden' && !isSelectedOptionText) {
+                     isVisible = false; visibilityReason = "visibility: hidden"; break;
+                 }
+                 if (parseFloat(style.opacity || '1') === 0 && !isSelectedOptionText) {
+                     isVisible = false; visibilityReason = "opacity: 0"; break;
+                 }
+                 // Standard checks
                 if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(elementToCheck.tagName)) {
-                    isVisible = false;
-                    break;
+                    isVisible = false; visibilityReason = `Tag: ${elementToCheck.tagName}`; break;
                 }
-		if (elementToCheck.classList.contains('sr-only') || elementToCheck.classList.contains('visually-hidden')) {
+                if (elementToCheck.classList.contains('sr-only') || elementToCheck.classList.contains('visually-hidden')) {
                     isVisible = false; visibilityReason = "Screen Reader Class"; break;
                 }
                 elementToCheck = elementToCheck.parentElement;
             }
         } catch (e) {
             console.warn("CS: Error checking visibility for node", node, e);
-            isVisible = false;
+            isVisible = false; visibilityReason = "Error";
         }
+
         if (!isVisible) {
-	    //console.log(`CS DEBUG: Node skipped visibility): "${nodeTextPreview}"`, elementToCheck);
-	    continue;
-	}
+             // console.log(`CS DEBUG: Node skipped visibility (${visibilityReason}): "${nodeTextPreview}"`, parentElement);
+            continue;
+        }
         // --- End Visibility Check ---
 
 
@@ -293,16 +312,14 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
         const range = document.createRange();
         range.selectNodeContents(node);
         const nodeViewportRects = range.getClientRects();
+        let fragmentAddedForThisNode = false; // Track if standard method works
 
-        // !! Iterate ALL rects for this node, don't break early !!
         for (let i = 0; i < nodeViewportRects.length; i++) {
             const nodeViewportRect = nodeViewportRects[i];
-	    //console.log(`CS DEBUG: INTERSECTION FOUND for node "${nodeTextPreview}"`, { nodeRect: nodeViewportRect, selectionRect: selectionViewportRect });
 
             if (nodeViewportRect.width > 0 && nodeViewportRect.height > 0 &&
                 rectsIntersect(selectionViewportRect, nodeViewportRect))
             {
-                // Calculate intersection (same as before)
                 const intersectTop = Math.max(selectionViewportRect.top, nodeViewportRect.top);
                 const intersectLeft = Math.max(selectionViewportRect.left, nodeViewportRect.left);
                 const intersectBottom = Math.min(selectionViewportRect.bottom, nodeViewportRect.bottom);
@@ -310,7 +327,6 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
 
                 if (intersectRight <= intersectLeft || intersectBottom <= intersectTop) continue;
 
-                // Get precise offsets using caretPositionFromPoint (same as before)
                 const startX = Math.max(0, Math.min(docWidth - 1, intersectLeft + 0.1));
                 const startY = Math.max(0, Math.min(docHeight - 1, intersectTop + 0.1));
                 const endX = Math.max(0, Math.min(docWidth - 1, intersectRight - 0.1));
@@ -322,66 +338,87 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
                 try {
                     const startPos = document.caretPositionFromPoint(startX, startY);
                     const endPos = document.caretPositionFromPoint(endX, endY);
-		    //console.log(`CS DEBUG: caretPos results: start=`, startPos, `end=`, endPos);
-                     // Determine offsets relative to the current node (same logic as before)
-                     if (startPos && startPos.offsetNode === node) {
-                        startOffset = startPos.offset;
-                    } else if (startPos && range.comparePoint(startPos.offsetNode, startPos.offset) === -1) {
-                        startOffset = 0;
-                    } else {
-                         if (!startPos) console.warn("CS: caretPositionFromPoint returned null for start of intersection", {startX, startY, node: node.nodeValue});
-                         startOffset = 0; // Fallback
-                    }
-                    if (endPos && endPos.offsetNode === node) {
-                        endOffset = endPos.offset;
-                    } else if (endPos && range.comparePoint(endPos.offsetNode, endPos.offset) === 1) {
-                         endOffset = node.nodeValue.length;
-                    } else {
-                         if (!endPos) console.warn("CS: caretPositionFromPoint returned null for end of intersection", {endX, endY, node: node.nodeValue});
-                         endOffset = node.nodeValue.length; // Fallback
-                    }
-                    if (startOffset > endOffset) {
-                         [startOffset, endOffset] = [endOffset, startOffset];
-                    }
-		    //console.log(`CS DEBUG: Calculated offsets: start=${startOffset}, end=${endOffset}`);
+
+                     if (startPos && startPos.offsetNode === node) { startOffset = startPos.offset; }
+                     else if (startPos && range.comparePoint(startPos.offsetNode, startPos.offset) === -1) { startOffset = 0; }
+                     else { if (!startPos) console.warn("CS: caretPositionFromPoint returned null for start", {startX, startY, node: node.nodeValue}); startOffset = 0; }
+
+                     if (endPos && endPos.offsetNode === node) { endOffset = endPos.offset; }
+                     else if (endPos && range.comparePoint(endPos.offsetNode, endPos.offset) === 1) { endOffset = node.nodeValue.length; }
+                     else { if (!endPos) console.warn("CS: caretPositionFromPoint returned null for end", {endX, endY, node: node.nodeValue}); endOffset = node.nodeValue.length; }
+
+                    if (startOffset > endOffset) { [startOffset, endOffset] = [endOffset, startOffset]; }
+
                 } catch (e) {
-                    console.error("CS: Error using caretPositionFromPoint within intersection", e, {node: node.nodeValue, startX, startY, endX, endY});
-                    continue; // Skip this rect on error
+                    console.error("CS: Error using caretPositionFromPoint within intersection", e);
+                    continue;
                 }
 
-                // Extract the substring
                 if (startOffset < endOffset) {
                     const rawSubstring = node.nodeValue.substring(startOffset, endOffset);
-
-                    // !! Clean the substring: replace newlines/tabs with spaces, trim !!
                     const cleanedSubstring = rawSubstring.replace(/[\n\r\t]+/g, ' ').trim();
 
-		    //console.log(`CS DEBUG: Substrings: raw="${rawSubstring}", cleaned="${cleanedSubstring}"`);
-
-                    // Only add if the cleaned substring is not empty
                     if (cleanedSubstring.length > 0) {
-			//console.log(`CS DEBUG: ADDING fragment: "${cleanedSubstring}"`);
-                        fragments.push({
-                            text: cleanedSubstring, // Store the cleaned, single-line text
-                            rect: { // Store the rect of *this specific* clientRect
-                                top: nodeViewportRect.top,
-                                left: nodeViewportRect.left,
-                                bottom: nodeViewportRect.bottom,
-                                right: nodeViewportRect.right,
-                                width: nodeViewportRect.width,
-                                height: nodeViewportRect.height
-                            }
-                        });
-                        // !! REMOVED the break; statement here !!
+                        const fragmentKey = `${nodeViewportRect.top}-${nodeViewportRect.left}-${cleanedSubstring}`;
+                        if (!uniqueFragmentKeys.has(fragmentKey)) { // Basic deduplication
+                             fragments.push({
+                                 text: cleanedSubstring,
+                                 rect: {
+                                     top: nodeViewportRect.top, left: nodeViewportRect.left,
+                                     bottom: nodeViewportRect.bottom, right: nodeViewportRect.right,
+                                     width: nodeViewportRect.width, height: nodeViewportRect.height
+                                 }
+                             });
+                             uniqueFragmentKeys.add(fragmentKey);
+                             fragmentAddedForThisNode = true; // Mark success
+                             // console.log(`CS DEBUG: ADDING fragment: "${cleanedSubstring}"`);
+                        }
                     }
                 }
             }
         } // End loop over nodeViewportRects
         range.detach();
+
+        // --- Fallback for Selected Option Text ---
+        if (isSelectedOptionText && !fragmentAddedForThisNode && associatedSelectElement) {
+             // console.log(`CS DEBUG: Standard text extraction failed for selected option "${nodeTextPreview}", attempting fallback.`);
+            try {
+                const selectRect = associatedSelectElement.getBoundingClientRect();
+                if (selectRect.width > 0 && selectRect.height > 0 && rectsIntersect(selectionViewportRect, selectRect)) {
+                    // Get text directly from the option element
+                    const optionText = parentElement.textContent; // Use textContent of the OPTION
+                    const cleanedOptionText = optionText?.replace(/[\n\r\t]+/g, ' ').trim();
+
+                    if (cleanedOptionText && cleanedOptionText.length > 0) {
+                        // Use SELECT's rect for sorting, ensure uniqueness based on select rect + text
+                        const fragmentKey = `${selectRect.top}-${selectRect.left}-SELECT-${cleanedOptionText}`;
+                        if (!uniqueFragmentKeys.has(fragmentKey)) {
+                             fragments.push({
+                                 text: cleanedOptionText,
+                                 rect: { // Use the SELECT element's rect
+                                     top: selectRect.top, left: selectRect.left,
+                                     bottom: selectRect.bottom, right: selectRect.right,
+                                     width: selectRect.width, height: selectRect.height
+                                 }
+                             });
+                             uniqueFragmentKeys.add(fragmentKey);
+                             console.log(`CS DEBUG: ADDING fallback fragment for selected option: "${cleanedOptionText}"`);
+                        }
+                    }
+                } else {
+                     // console.log(`CS DEBUG: Fallback failed: Select element rect does not intersect or has no dimensions.`, {selectRect, selectionViewportRect});
+                }
+            } catch (fallbackError) {
+                console.error("CS: Error during selected option fallback", fallbackError);
+            }
+        }
+        // --- End Fallback ---
+
     } // End while loop over nodes
 
-    // --- Sorting (same as before) ---
+    // --- Sorting, Merging, Post-processing (Remains the same) ---
     if (fragments.length === 0) {
+        console.warn("CS: No fragments collected.");
         return "";
     }
     fragments.sort((a, b) => {
@@ -391,49 +428,31 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
         return a.rect.left - b.rect.left;
     });
 
-    // --- Merge Fragments, Adding Breaks based *only* on Vertical Gaps ---
-    let mergedLines = []; // Store lines as they are built
-    let currentLine = ""; // The line currently being built
-
+    let mergedLines = [];
+    let currentLine = "";
     fragments.forEach((frag, index) => {
         if (index === 0) {
-            // Start the first line
             currentLine = frag.text;
         } else {
             const lastFrag = fragments[index - 1];
             const verticalGap = frag.rect.top - lastFrag.rect.bottom;
             const horizontalGap = frag.rect.left - lastFrag.rect.right;
-
-            // Check if it's a new visual line based on vertical gap
-            const isNewLine = verticalGap > -lineBreakThreshold; // True if clear gap or minor overlap
-
+            const isNewLine = verticalGap > -lineBreakThreshold;
             if (isNewLine) {
-                // Finish the previous line
                 mergedLines.push(currentLine);
-                // Start the new line with the current fragment's text
                 currentLine = frag.text;
             } else {
-                // Continue on the same visual line
-                // Add a space if there's a horizontal gap
                 if (horizontalGap > 1) {
                     currentLine += " ";
                 }
-                // Append the current fragment's text
                 currentLine += frag.text;
             }
         }
     });
-
-    // Add the last line being built
     if (currentLine.length > 0) {
          mergedLines.push(currentLine);
     }
 
-
-    // --- Post-processing: Filter already-trimmed lines (redundant check but safe) and join ---
-    // Since fragments were trimmed and merging logic adds spaces correctly,
-    // filtering might not be strictly needed unless merging somehow creates whitespace-only lines.
-    // Let's keep it for robustness.
     const cleanedLines = mergedLines.filter(line => line.trim().length > 0);
     const finalExtractedText = cleanedLines.join('\n');
 
