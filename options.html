@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Freeform Text Copy Options</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 20px; color: #333; }
+    .option { margin-bottom: 15px; }
+    label { font-size: 16px; cursor: pointer; display: flex; align-items: center; gap: 8px;}
+    p { font-size: 13px; color: #666; margin-top: 6px; margin-left: 26px; }
+  </style>
+</head>
+<body>
+  <h2>Options</h2>
+  <div class="option">
+    <label>
+      <input type="checkbox" id="preserveLayout"> Preserve page layout (columns / spacing)
+    </label>
+    <p>When enabled, the extension will attempt to recreate the visual spacing of the selected text by inserting multiple spaces. <i>(Tip: You can also hold the <b>Alt</b> key while selecting to toggle this temporarily.)</i></p>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

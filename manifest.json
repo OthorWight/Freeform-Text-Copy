@@ -6,7 +6,8 @@
   "permissions": [
     "activeTab",
     "scripting",
-    "clipboardWrite"
+    "clipboardWrite",
+    "storage"
   ],
   "action": {
     "default_icon": {
@@ -15,6 +16,10 @@
       "128": "icons/icon128.png"
     },
     "default_title": "Activate Freeform Selection"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
   },
   "background": {
     "service_worker": "background.js"

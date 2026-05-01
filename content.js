@@ -29,6 +29,19 @@ let selectionBox = null;
 let isDragging = false;
 
 const LINE_BREAK_THRESHOLD_VERTICAL = 5;
+let preserveLayoutOption = false;
+
+// Load user's layout preference
+if (chrome.storage && chrome.storage.sync) {
+    chrome.storage.sync.get({ preserveLayout: false }, (items) => {
+        preserveLayoutOption = items.preserveLayout;
+    });
+    chrome.storage.onChanged.addListener((changes, namespace) => {
+        if (namespace === 'sync' && changes.preserveLayout) {
+            preserveLayoutOption = changes.preserveLayout.newValue;
+        }
+    });
+}
 
 console.log(`FF Copy CS Loaded in frame: ${window.location.href.substring(0, 100)}...`);
 
@@ -123,7 +136,8 @@ function handleMouseUp(event) {
     let textFound = false;
     selectionBox.style.borderColor = 'orange';
 
-    const text = extractTextInBox(plainSelectionViewportRect);
+    const usePreserveLayout = preserveLayoutOption || event.altKey;
+    const text = extractTextInBox(plainSelectionViewportRect, LINE_BREAK_THRESHOLD_VERTICAL, usePreserveLayout);
 
     if (text) {
         copyToClipboard(text);
@@ -174,7 +188,7 @@ function initSelectionBox() {
   }
 }
 
-function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
+function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5, preserveLayout = false) {
     console.log("CS: Extracting text within viewport rect:", selectionViewportRect);
     const fragments = [];
     const uniqueFragmentKeys = new Set();
@@ -390,7 +404,13 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
                 currentLine = frag.text;
             } else {
                 if (horizontalGap > 1) {
-                    currentLine += " ";
+                    if (preserveLayout) {
+                        const avgCharWidth = Math.max(lastFrag.rect.width / Math.max(1, lastFrag.text.length), 4);
+                        const spaceCount = Math.floor(horizontalGap / avgCharWidth);
+                        currentLine += " ".repeat(Math.max(1, spaceCount));
+                    } else {
+                        currentLine += " ";
+                    }
                 }
                 currentLine += frag.text;
             }
