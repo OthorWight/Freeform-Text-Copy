@@ -84,5 +84,13 @@ chrome.tabs.onRemoved.addListener((tabId) => {
      console.log(`BG: Cleaned up state for closed tab ${tabId}`);
 });
 
+// Clean up state when a tab is refreshed or navigates to a new page
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status === 'loading') {
+        activeTabs.delete(tabId);
+        delete selectingFrame[tabId];
+    }
+});
+
 
 console.log("Freeform Text Copy Background Script Loaded (v1.3 - Active Frame)");

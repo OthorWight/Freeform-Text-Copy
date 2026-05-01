@@ -249,6 +249,7 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
     let node;
     const docWidth = document.documentElement.clientWidth;
     const docHeight = document.documentElement.clientHeight;
+    const visibilityCache = new Map();
 
     while (node = walker.nextNode()) {
         const nodeTextPreview = node.nodeValue?.trim().substring(0, 50) + "...";
@@ -274,9 +275,16 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
         let elementToCheck = parentElement;
         let isVisible = true;
         let visibilityReason = "Passed"; // Track reason for logging
+        const chain = [];
 
         try {
             while (elementToCheck && elementToCheck !== document.body) {
+                if (visibilityCache.has(elementToCheck)) {
+                    isVisible = visibilityCache.get(elementToCheck);
+                    visibilityReason = "Cached";
+                    break;
+                }
+                chain.push(elementToCheck);
                 const style = window.getComputedStyle(elementToCheck);
                 if (!style) { isVisible = false; visibilityReason = "No Computed Style"; break; }
                 if (style.display === 'none') { isVisible = false; visibilityReason = "display: none"; break; }
@@ -295,6 +303,9 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
                     isVisible = false; visibilityReason = "Screen Reader Class"; break;
                 }
                 elementToCheck = elementToCheck.parentElement;
+            }
+            for (const el of chain) {
+                visibilityCache.set(el, isVisible);
             }
         } catch (e) {
             console.warn("CS: Error checking visibility for node", node, e);
@@ -336,8 +347,16 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
                 let endOffset = node.nodeValue.length;
 
                 try {
-                    const startPos = document.caretPositionFromPoint(startX, startY);
-                    const endPos = document.caretPositionFromPoint(endX, endY);
+                    let startPos = null, endPos = null;
+                    if (document.caretPositionFromPoint) {
+                        startPos = document.caretPositionFromPoint(startX, startY);
+                        endPos = document.caretPositionFromPoint(endX, endY);
+                    } else if (document.caretRangeFromPoint) {
+                        const startRange = document.caretRangeFromPoint(startX, startY);
+                        if (startRange) startPos = { offsetNode: startRange.startContainer, offset: startRange.startOffset };
+                        const endRange = document.caretRangeFromPoint(endX, endY);
+                        if (endRange) endPos = { offsetNode: endRange.startContainer, offset: endRange.startOffset };
+                    }
 
                      if (startPos && startPos.offsetNode === node) { startOffset = startPos.offset; }
                      else if (startPos && range.comparePoint(startPos.offsetNode, startPos.offset) === -1) { startOffset = 0; }
