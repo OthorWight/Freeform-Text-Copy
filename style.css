@@ -8,6 +8,12 @@
   display: none;
 }
 
+.freeform-selection-box-internal.preserve-layout {
+  border-color: #28a745;
+  background-color: rgba(40, 167, 69, 0.1);
+  border-style: solid;
+}
+
 body.selection-active {
   cursor: crosshair !important;
 }

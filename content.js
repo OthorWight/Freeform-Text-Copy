@@ -83,8 +83,12 @@ function handleMouseDown(event) {
                 selectionBox.style.left = `${startX}px`; selectionBox.style.top = `${startY}px`;
                 selectionBox.style.width = '0px'; selectionBox.style.height = '0px';
                 selectionBox.style.display = 'block';
+                selectionBox.style.borderColor = ''; // Reset any success/error inline colors
+                updateSelectionBoxVisuals(event);
                 document.addEventListener('mousemove', handleMouseMove, true);
                 document.addEventListener('mouseup', handleMouseUp, true);
+                document.addEventListener('keydown', handleKeyDownUp, true);
+                document.addEventListener('keyup', handleKeyDownUp, true);
             } else {
                 console.log("CS: Background denied selection start.");
             }
@@ -101,9 +105,25 @@ function handleMouseMove(event) {
     if (selectionBox) {
         selectionBox.style.left = `${left}px`; selectionBox.style.top = `${top}px`;
         selectionBox.style.width = `${width}px`; selectionBox.style.height = `${height}px`;
+        updateSelectionBoxVisuals(event);
     }
 }
 
+function updateSelectionBoxVisuals(event) {
+    if (!selectionBox) return;
+    const usePreserveLayout = preserveLayoutOption || event.altKey;
+    if (usePreserveLayout) {
+        selectionBox.classList.add('preserve-layout');
+    } else {
+        selectionBox.classList.remove('preserve-layout');
+    }
+}
+
+function handleKeyDownUp(event) {
+    if (event.key === 'Alt') {
+        updateSelectionBoxVisuals(event);
+    }
+}
 
 function handleMouseUp(event) {
     document.body.classList.remove('cs-prevent-select');
@@ -116,6 +136,8 @@ function handleMouseUp(event) {
     isDragging = false;
     document.removeEventListener('mousemove', handleMouseMove, true);
     document.removeEventListener('mouseup', handleMouseUp, true);
+    document.removeEventListener('keydown', handleKeyDownUp, true);
+    document.removeEventListener('keyup', handleKeyDownUp, true);
 
     const selectionViewportRect = selectionBox?.getBoundingClientRect();
 
@@ -149,7 +171,7 @@ function handleMouseUp(event) {
 
     isCurrentlySelectingInThisFrame = false;
     if (selectionBox && !textFound) {
-         selectionBox.style.borderColor = '#007bff';
+         selectionBox.style.borderColor = '';
     }
     if (selectionBox) selectionBox.style.display = 'none';
 
@@ -167,9 +189,12 @@ function cancelSelectionDrag(notifyBackground = false) {
     isCurrentlySelectingInThisFrame = false;
     document.removeEventListener('mousemove', handleMouseMove, true);
     document.removeEventListener('mouseup', handleMouseUp, true);
+    document.removeEventListener('keydown', handleKeyDownUp, true);
+    document.removeEventListener('keyup', handleKeyDownUp, true);
     if (selectionBox) {
         selectionBox.style.display = 'none';
-        selectionBox.style.borderColor = '#007bff';
+        selectionBox.style.borderColor = '';
+        selectionBox.classList.remove('preserve-layout');
     }
     if (wasSelecting && notifyBackground) {
          chrome.runtime.sendMessage({ action: "frameCancelledSelection" })
@@ -250,6 +275,15 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5, preserv
                  if (parseFloat(style.opacity || '1') === 0 && !isSelectedOptionText) {
                      isVisible = false; visibilityReason = "opacity: 0"; break;
                  }
+                 if (style.clip === 'rect(0px, 0px, 0px, 0px)' || style.clip === 'rect(1px, 1px, 1px, 1px)' || style.clipPath === 'inset(100%)') {
+                     isVisible = false; visibilityReason = "CSS Clip Hidden"; break;
+                 }
+                 if (style.overflow === 'hidden' && (style.width === '0px' || style.width === '1px' || style.height === '0px' || style.height === '1px')) {
+                     isVisible = false; visibilityReason = "1px Overflow Hidden"; break;
+                 }
+                 if (parseFloat(style.textIndent) < -900) {
+                     isVisible = false; visibilityReason = "Text Indent Hidden"; break;
+                 }
                 if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(elementToCheck.tagName)) {
                     isVisible = false; visibilityReason = `Tag: ${elementToCheck.tagName}`; break;
                 }
@@ -279,7 +313,7 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5, preserv
         for (let i = 0; i < nodeViewportRects.length; i++) {
             const nodeViewportRect = nodeViewportRects[i];
 
-            if (nodeViewportRect.width > 0 && nodeViewportRect.height > 0 &&
+            if (nodeViewportRect.width > 1 && nodeViewportRect.height > 1 &&
                 rectsIntersect(selectionViewportRect, nodeViewportRect))
             {
                 const intersectTop = Math.max(selectionViewportRect.top, nodeViewportRect.top);
@@ -389,26 +423,47 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5, preserv
         return a.rect.left - b.rect.left;
     });
 
+    // Calculate a consistent character width for the entire selection to align columns
+    let globalCharWidth = 8;
+    if (preserveLayout && fragments.length > 0) {
+        let totalChars = 0;
+        let totalWidth = 0;
+        fragments.forEach(f => {
+            totalChars += f.text.length;
+            totalWidth += f.rect.width;
+        });
+        if (totalChars > 0) {
+            globalCharWidth = Math.max(totalWidth / totalChars, 4);
+        }
+    }
+
     let mergedLines = [];
     let currentLine = "";
     fragments.forEach((frag, index) => {
+        const expectedStart = preserveLayout 
+            ? Math.max(0, Math.floor((frag.rect.left - selectionViewportRect.left) / globalCharWidth))
+            : 0;
+
         if (index === 0) {
-            currentLine = frag.text;
+            currentLine = preserveLayout ? " ".repeat(expectedStart) + frag.text : frag.text;
         } else {
             const lastFrag = fragments[index - 1];
             const verticalGap = frag.rect.top - lastFrag.rect.bottom;
             const horizontalGap = frag.rect.left - lastFrag.rect.right;
             const isNewLine = verticalGap > -lineBreakThreshold;
+
             if (isNewLine) {
                 mergedLines.push(currentLine);
-                currentLine = frag.text;
+                currentLine = preserveLayout ? " ".repeat(expectedStart) + frag.text : frag.text;
             } else {
-                if (horizontalGap > 1) {
-                    if (preserveLayout) {
-                        const avgCharWidth = Math.max(lastFrag.rect.width / Math.max(1, lastFrag.text.length), 4);
-                        const spaceCount = Math.floor(horizontalGap / avgCharWidth);
-                        currentLine += " ".repeat(Math.max(1, spaceCount));
-                    } else {
+                if (preserveLayout) {
+                    if (expectedStart > currentLine.length) {
+                        currentLine += " ".repeat(expectedStart - currentLine.length);
+                    } else if (horizontalGap > 1) {
+                        currentLine += " ";
+                    }
+                } else {
+                    if (horizontalGap > 1) {
                         currentLine += " ";
                     }
                 }
@@ -420,7 +475,9 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5, preserv
          mergedLines.push(currentLine);
     }
 
-    const cleanedLines = mergedLines.filter(line => line.trim().length > 0);
+    const cleanedLines = mergedLines
+        .filter(line => line.trim().length > 0)
+        .map(line => line.trim());
     const finalExtractedText = cleanedLines.join('\n');
 
     console.log("CS Extracted (Cleaned, Single-Line Fragments):", finalExtractedText);
