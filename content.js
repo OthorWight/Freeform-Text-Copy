@@ -1,15 +1,13 @@
 function injectPreventSelectStyle() {
     const styleId = 'cs-prevent-select-style';
-    if (document.getElementById(styleId)) return; // Already injected
+    if (document.getElementById(styleId)) return;
 
     const css = `
     body.cs-prevent-select {
-      -webkit-user-select: none; /* Safari */
-      -moz-user-select: none;    /* Firefox */
-      -ms-user-select: none;     /* IE/Edge */
-      user-select: none;         /* Standard */
-      /* Optional: Consider adding a cursor style if needed */
-      /* cursor: crosshair !important; */
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      user-select: none;
     }
   `;
 
@@ -20,24 +18,20 @@ function injectPreventSelectStyle() {
     console.log("CS: Injected prevent-select style.");
 }
 
-injectPreventSelectStyle(); // Call it once when the script loads
+injectPreventSelectStyle();
 
-// --- State Variables (per frame instance) ---
-// ... (keep existing state variables: isSelectionAvailableGlobally, etc.) ...
 let isSelectionAvailableGlobally = false;
 let canThisFrameListenForMouseDown = true;
 let isCurrentlySelectingInThisFrame = false;
 
-let startX, startY; // Document coordinates relative to *this* frame
+let startX, startY;
 let selectionBox = null;
 let isDragging = false;
 
-const LINE_BREAK_THRESHOLD_VERTICAL = 5; // Pixels
+const LINE_BREAK_THRESHOLD_VERTICAL = 5;
 
 console.log(`FF Copy CS Loaded in frame: ${window.location.href.substring(0, 100)}...`);
 
-// --- Core Activation / Deactivation ---
-// ... (keep existing functions: makeSelectionAvailable, makeSelectionUnavailable) ...
 function makeSelectionAvailable() {
     if (isSelectionAvailableGlobally) return;
     isSelectionAvailableGlobally = true;
@@ -59,8 +53,6 @@ function makeSelectionUnavailable() {
     }
 }
 
-// --- Event Handlers ---
-// ... (keep existing handleMouseDown, handleMouseMove) ...
 function handleMouseDown(event) {
     if (!isSelectionAvailableGlobally || !canThisFrameListenForMouseDown || isCurrentlySelectingInThisFrame || event.button !== 0) return;
     console.log("CS: MouseDown detected, attempting to start selection...");
@@ -70,14 +62,11 @@ function handleMouseDown(event) {
                 console.log("CS: Background confirmed, starting selection in this frame.");
                 isCurrentlySelectingInThisFrame = true; isDragging = true; canThisFrameListenForMouseDown = false;
 
-                // ***** ADD CLASS TO PREVENT HIGHLIGHTING *****
                 document.body.classList.add('cs-prevent-select');
-                // ********************************************
 
                 event.preventDefault(); event.stopPropagation();
-                startX = event.pageX; startY = event.pageY; // Document coords
-                initSelectionBox(); // Creates box in *this* frame
-                // Position box using document coords initially
+                startX = event.pageX; startY = event.pageY;
+                initSelectionBox();
                 selectionBox.style.left = `${startX}px`; selectionBox.style.top = `${startY}px`;
                 selectionBox.style.width = '0px'; selectionBox.style.height = '0px';
                 selectionBox.style.display = 'block';
@@ -93,43 +82,36 @@ function handleMouseDown(event) {
 function handleMouseMove(event) {
     if (!isDragging) return;
     event.preventDefault(); event.stopPropagation();
-    const currentX = event.pageX; const currentY = event.pageY; // Document coords
+    const currentX = event.pageX; const currentY = event.pageY;
     const left = Math.min(startX, currentX); const top = Math.min(startY, currentY);
     const width = Math.abs(currentX - startX); const height = Math.abs(currentY - startY);
-    if (selectionBox) { // Position using document coords
+    if (selectionBox) {
         selectionBox.style.left = `${left}px`; selectionBox.style.top = `${top}px`;
         selectionBox.style.width = `${width}px`; selectionBox.style.height = `${height}px`;
     }
 }
 
 
-// --- MOUSE UP (Needs adjustment to pass Viewport Rect) ---
 function handleMouseUp(event) {
-    // ***** REMOVE CLASS TO RE-ENABLE HIGHLIGHTING *****
-    // Do this *before* checking isDragging, to ensure it's always removed on mouseup
     document.body.classList.remove('cs-prevent-select');
-    // *************************************************
 
-    if (!isDragging) return; // Check isDragging *after* removing the class
+    if (!isDragging) return;
 
     event.preventDefault(); event.stopPropagation();
     console.log("CS: MouseUp detected, ending selection drag.");
 
-    isDragging = false; // Update state *after* checking if we were dragging
+    isDragging = false;
     document.removeEventListener('mousemove', handleMouseMove, true);
     document.removeEventListener('mouseup', handleMouseUp, true);
 
-    // ***** CHANGE: Get Viewport coordinates for text extraction *****
     const selectionViewportRect = selectionBox?.getBoundingClientRect();
 
     if (!selectionViewportRect || selectionViewportRect.width <= 2 || selectionViewportRect.height <= 2) {
         console.log("CS: Selection too small or box not found.");
-        cancelSelectionDrag(true); // Cancel and notify background immediately
-        // Note: cancelSelectionDrag will also attempt removal, which is harmless
+        cancelSelectionDrag(true);
         return;
     }
 
-     // Convert to plain object for safety, although not strictly necessary
      const plainSelectionViewportRect = {
         top: selectionViewportRect.top, left: selectionViewportRect.left,
         bottom: selectionViewportRect.bottom, right: selectionViewportRect.right,
@@ -139,9 +121,8 @@ function handleMouseUp(event) {
     console.log("CS: Final Selection Viewport Rect (local):", plainSelectionViewportRect);
 
     let textFound = false;
-    selectionBox.style.borderColor = 'orange'; // Feedback during processing
+    selectionBox.style.borderColor = 'orange';
 
-    // --- Pass Viewport Rect to extraction ---
     const text = extractTextInBox(plainSelectionViewportRect);
 
     if (text) {
@@ -152,27 +133,20 @@ function handleMouseUp(event) {
         displayTemporaryMessage("No text found", 1500, true);
     }
 
-    // --- Cleanup and Notify Background ---
-    isCurrentlySelectingInThisFrame = false; // Done selecting
+    isCurrentlySelectingInThisFrame = false;
     if (selectionBox && !textFound) {
          selectionBox.style.borderColor = '#007bff';
     }
     if (selectionBox) selectionBox.style.display = 'none';
 
-    // Always notify background that this frame ended
     chrome.runtime.sendMessage({ action: "frameEndedSelection" })
         .catch(err => console.error("CS: Error sending frameEndedSelection to background:", err));
-    // Background handles global deactivation
 }
 
-// --- Helper: Cancel Drag (Add optional background notification) ---
 function cancelSelectionDrag(notifyBackground = false) {
     console.log("CS: Cancelling active selection drag.");
 
-    // ***** REMOVE CLASS TO RE-ENABLE HIGHLIGHTING *****
-    // Add this here too, in case selection is cancelled other ways
     document.body.classList.remove('cs-prevent-select');
-    // *************************************************
 
     const wasSelecting = isCurrentlySelectingInThisFrame || isDragging;
     isDragging = false;
@@ -183,56 +157,27 @@ function cancelSelectionDrag(notifyBackground = false) {
         selectionBox.style.display = 'none';
         selectionBox.style.borderColor = '#007bff';
     }
-    // If we were actively selecting and need to tell background immediately
     if (wasSelecting && notifyBackground) {
-         chrome.runtime.sendMessage({ action: "frameCancelledSelection" }) // Use cancel action
+         chrome.runtime.sendMessage({ action: "frameCancelledSelection" })
             .catch(err => console.error("CS: Error sending frameCancelledSelection:", err));
     }
-    // Reset ability to listen only if global mode is still on (usually isn't after cancel)
-    // canThisFrameListenForMouseDown = isSelectionAvailableGlobally;
 }
 
-
-// --- Box Initialization (Local to Frame) ---
-// ... (keep existing initSelectionBox) ...
 function initSelectionBox() {
   if (!selectionBox) {
     console.log("CS: Initializing selection box in this frame.");
     selectionBox = document.createElement('div');
-    // Use class for styling, ensure position:absolute for document coord positioning
     selectionBox.className = 'freeform-selection-box-internal';
-    selectionBox.style.position = 'absolute'; // Crucial for pageX/Y positioning
+    selectionBox.style.position = 'absolute';
     document.body.appendChild(selectionBox);
     selectionBox.style.display = 'none';
   }
 }
 
-
-// --- Text Extraction (MAJOR CHANGES using caretRangeFromPoint) ---
-// function rectsIntersect(r1, r2) { // Works for both viewport and document if consistent
-//   return !(r2.left >= r1.right || r2.right <= r1.left || r2.top >= r1.bottom || r2.bottom <= r1.top);
-// }
-
-
-
-/**
- * Extracts *visible* text *precisely* within a given viewport rectangle.
- * Iterates through text nodes, checks visibility and intersection,
- * then uses caretPositionFromPoint on the intersection corners
- * to clip the text within each node accurately. Handles wrapped nodes
- * creating multiple fragments. Treats fragment text as single-line,
- * adding newlines based only on vertical gaps between fragments.
- * Removes resulting empty or whitespace-only lines.
- * Includes special fallback handling for visually selected text in disabled <select> elements.
- *
- * @param {DOMRect | {top: number, left: number, bottom: number, right: number}} selectionViewportRect - The selection rectangle in viewport coordinates.
- * @param {number} [lineBreakThreshold=5] - Approx vertical pixel gap to trigger a newline.
- * @returns {string} The extracted text.
- */
 function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
     console.log("CS: Extracting text within viewport rect:", selectionViewportRect);
-    const fragments = []; // Store { text: "substring", rect: nodeViewportRect }
-    const uniqueFragmentKeys = new Set(); // Avoid duplicates from fallback
+    const fragments = [];
+    const uniqueFragmentKeys = new Set();
 
     if (!selectionViewportRect || selectionViewportRect.width <= 0 || selectionViewportRect.height <= 0) {
         console.warn("CS: Invalid or zero-area selection rectangle.");
@@ -257,11 +202,9 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
             continue;
         }
 
-        // --- Visibility Check ---
         const parentElement = node.parentElement;
         if (!parentElement) continue;
 
-        // *** Special Check for Selected Options ***
         let isSelectedOptionText = false;
         let associatedSelectElement = null;
         if (parentElement.tagName === 'OPTION') {
@@ -270,11 +213,10 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
                 isSelectedOptionText = true;
             }
         }
-        // ******************************************
 
         let elementToCheck = parentElement;
         let isVisible = true;
-        let visibilityReason = "Passed"; // Track reason for logging
+        let visibilityReason = "Passed";
         const chain = [];
 
         try {
@@ -288,14 +230,12 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
                 const style = window.getComputedStyle(elementToCheck);
                 if (!style) { isVisible = false; visibilityReason = "No Computed Style"; break; }
                 if (style.display === 'none') { isVisible = false; visibilityReason = "display: none"; break; }
-                // Relaxed check: Only fail on hidden/opacity if NOT selected option text
                  if (style.visibility === 'hidden' && !isSelectedOptionText) {
                      isVisible = false; visibilityReason = "visibility: hidden"; break;
                  }
                  if (parseFloat(style.opacity || '1') === 0 && !isSelectedOptionText) {
                      isVisible = false; visibilityReason = "opacity: 0"; break;
                  }
-                 // Standard checks
                 if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(elementToCheck.tagName)) {
                     isVisible = false; visibilityReason = `Tag: ${elementToCheck.tagName}`; break;
                 }
@@ -313,17 +253,14 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
         }
 
         if (!isVisible) {
-             // console.log(`CS DEBUG: Node skipped visibility (${visibilityReason}): "${nodeTextPreview}"`, parentElement);
             continue;
         }
-        // --- End Visibility Check ---
 
 
-        // --- Intersection and Clipping ---
         const range = document.createRange();
         range.selectNodeContents(node);
         const nodeViewportRects = range.getClientRects();
-        let fragmentAddedForThisNode = false; // Track if standard method works
+        let fragmentAddedForThisNode = false;
 
         for (let i = 0; i < nodeViewportRects.length; i++) {
             const nodeViewportRect = nodeViewportRects[i];
@@ -379,7 +316,7 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
 
                     if (cleanedSubstring.length > 0) {
                         const fragmentKey = `${nodeViewportRect.top}-${nodeViewportRect.left}-${cleanedSubstring}`;
-                        if (!uniqueFragmentKeys.has(fragmentKey)) { // Basic deduplication
+                        if (!uniqueFragmentKeys.has(fragmentKey)) {
                              fragments.push({
                                  text: cleanedSubstring,
                                  rect: {
@@ -389,32 +326,27 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
                                  }
                              });
                              uniqueFragmentKeys.add(fragmentKey);
-                             fragmentAddedForThisNode = true; // Mark success
-                             // console.log(`CS DEBUG: ADDING fragment: "${cleanedSubstring}"`);
+                             fragmentAddedForThisNode = true;
                         }
                     }
                 }
             }
-        } // End loop over nodeViewportRects
+        }
         range.detach();
 
-        // --- Fallback for Selected Option Text ---
         if (isSelectedOptionText && !fragmentAddedForThisNode && associatedSelectElement) {
-             // console.log(`CS DEBUG: Standard text extraction failed for selected option "${nodeTextPreview}", attempting fallback.`);
             try {
                 const selectRect = associatedSelectElement.getBoundingClientRect();
                 if (selectRect.width > 0 && selectRect.height > 0 && rectsIntersect(selectionViewportRect, selectRect)) {
-                    // Get text directly from the option element
-                    const optionText = parentElement.textContent; // Use textContent of the OPTION
+                    const optionText = parentElement.textContent;
                     const cleanedOptionText = optionText?.replace(/[\n\r\t]+/g, ' ').trim();
 
                     if (cleanedOptionText && cleanedOptionText.length > 0) {
-                        // Use SELECT's rect for sorting, ensure uniqueness based on select rect + text
                         const fragmentKey = `${selectRect.top}-${selectRect.left}-SELECT-${cleanedOptionText}`;
                         if (!uniqueFragmentKeys.has(fragmentKey)) {
                              fragments.push({
                                  text: cleanedOptionText,
-                                 rect: { // Use the SELECT element's rect
+                                 rect: {
                                      top: selectRect.top, left: selectRect.left,
                                      bottom: selectRect.bottom, right: selectRect.right,
                                      width: selectRect.width, height: selectRect.height
@@ -424,18 +356,14 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
                              console.log(`CS DEBUG: ADDING fallback fragment for selected option: "${cleanedOptionText}"`);
                         }
                     }
-                } else {
-                     // console.log(`CS DEBUG: Fallback failed: Select element rect does not intersect or has no dimensions.`, {selectRect, selectionViewportRect});
                 }
             } catch (fallbackError) {
                 console.error("CS: Error during selected option fallback", fallbackError);
             }
         }
-        // --- End Fallback ---
 
-    } // End while loop over nodes
+    }
 
-    // --- Sorting, Merging, Post-processing (Remains the same) ---
     if (fragments.length === 0) {
         console.warn("CS: No fragments collected.");
         return "";
@@ -479,7 +407,6 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5) {
     return finalExtractedText;
 }
 
-// Helper function (ensure you have this)
 function rectsIntersect(r1, r2) {
     return !(r2.left >= r1.right ||
              r2.right <= r1.left ||
@@ -487,9 +414,6 @@ function rectsIntersect(r1, r2) {
              r2.bottom <= r1.top);
 }
 
-
-// --- Clipboard Function (Local to Frame, unchanged) ---
-// ... (keep existing copyToClipboard) ...
 function copyToClipboard(text) {
     navigator.clipboard.writeText(text)
         .then(() => {
@@ -504,8 +428,6 @@ function copyToClipboard(text) {
         });
 }
 
-// --- Utility: Temporary Message (Local to Frame, unchanged) ---
-// ... (keep existing displayTemporaryMessage) ...
 let messageTimeout = null;
 function displayTemporaryMessage(message, duration = 2000, isError = false) {
     let messageDiv = document.getElementById('freeform-copy-message-local');
@@ -532,9 +454,6 @@ function displayTemporaryMessage(message, duration = 2000, isError = false) {
     }, duration);
 }
 
-
-// --- Message Listener (from Background, unchanged) ---
-// ... (keep existing listener for setSelectionAvailability, disableOtherMouseDowns) ...
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "setSelectionAvailability") {
         if (request.available) makeSelectionAvailable(); else makeSelectionUnavailable();
@@ -545,11 +464,3 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
     }
 });
-
-
-// --- Cleanup on page unload ---
-// ... (keep existing unload listener) ...
-//window.addEventListener('unload', () => {
-//     console.log("CS: Unloading frame, ensuring deactivated state.");
-//     makeSelectionUnavailable();
-//});
