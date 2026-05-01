@@ -213,6 +213,25 @@ function initSelectionBox() {
   }
 }
 
+function* walkTextNodesPiercingShadow(node) {
+    if (node.nodeType === Node.TEXT_NODE) {
+        yield node;
+    } else if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+            const tag = node.tagName.toUpperCase();
+            if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(tag)) {
+                return;
+            }
+        }
+        if (node.shadowRoot) {
+            yield* walkTextNodesPiercingShadow(node.shadowRoot);
+        }
+        for (let child of node.childNodes) {
+            yield* walkTextNodesPiercingShadow(child);
+        }
+    }
+}
+
 function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5, preserveLayout = false) {
     console.log("CS: Extracting text within viewport rect:", selectionViewportRect);
     const fragments = [];
@@ -223,25 +242,17 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5, preserv
         return "";
     }
 
-    const walker = document.createTreeWalker(
-        document.body,
-        NodeFilter.SHOW_TEXT,
-        null,
-        false
-    );
-
-    let node;
     const docWidth = document.documentElement.clientWidth;
     const docHeight = document.documentElement.clientHeight;
     const visibilityCache = new Map();
 
-    while (node = walker.nextNode()) {
+    for (const node of walkTextNodesPiercingShadow(document.body)) {
         const nodeTextPreview = node.nodeValue?.trim().substring(0, 50) + "...";
         if (!node.nodeValue || node.nodeValue.trim().length === 0) {
             continue;
         }
 
-        const parentElement = node.parentElement;
+        const parentElement = node.parentElement || (node.parentNode && node.parentNode.host);
         if (!parentElement) continue;
 
         let isSelectedOptionText = false;
@@ -259,7 +270,7 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5, preserv
         const chain = [];
 
         try {
-            while (elementToCheck && elementToCheck !== document.body) {
+            while (elementToCheck && elementToCheck !== document.body && elementToCheck !== document.documentElement) {
                 if (visibilityCache.has(elementToCheck)) {
                     isVisible = visibilityCache.get(elementToCheck);
                     visibilityReason = "Cached";
@@ -290,7 +301,7 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5, preserv
                 if (elementToCheck.classList.contains('sr-only') || elementToCheck.classList.contains('visually-hidden')) {
                     isVisible = false; visibilityReason = "Screen Reader Class"; break;
                 }
-                elementToCheck = elementToCheck.parentElement;
+                elementToCheck = elementToCheck.parentElement || (elementToCheck.parentNode && elementToCheck.parentNode.host);
             }
             for (const el of chain) {
                 visibilityCache.set(el, isVisible);
@@ -343,19 +354,24 @@ function extractTextInBox(selectionViewportRect, lineBreakThreshold = 5, preserv
                         if (endRange) endPos = { offsetNode: endRange.startContainer, offset: endRange.startOffset };
                     }
 
-                     if (startPos && startPos.offsetNode === node) { startOffset = startPos.offset; }
-                     else if (startPos && range.comparePoint(startPos.offsetNode, startPos.offset) === -1) { startOffset = 0; }
-                     else { if (!startPos) console.warn("CS: caretPositionFromPoint returned null for start", {startX, startY, node: node.nodeValue}); startOffset = 0; }
+                     try {
+                         if (startPos && startPos.offsetNode === node) { startOffset = startPos.offset; }
+                         else if (startPos && range.comparePoint(startPos.offsetNode, startPos.offset) === -1) { startOffset = 0; }
+                         else { startOffset = 0; }
+                     } catch (e) { startOffset = 0; }
 
-                     if (endPos && endPos.offsetNode === node) { endOffset = endPos.offset; }
-                     else if (endPos && range.comparePoint(endPos.offsetNode, endPos.offset) === 1) { endOffset = node.nodeValue.length; }
-                     else { if (!endPos) console.warn("CS: caretPositionFromPoint returned null for end", {endX, endY, node: node.nodeValue}); endOffset = node.nodeValue.length; }
+                     try {
+                         if (endPos && endPos.offsetNode === node) { endOffset = endPos.offset; }
+                         else if (endPos && range.comparePoint(endPos.offsetNode, endPos.offset) === 1) { endOffset = node.nodeValue.length; }
+                         else { endOffset = node.nodeValue.length; }
+                     } catch (e) { endOffset = node.nodeValue.length; }
 
                     if (startOffset > endOffset) { [startOffset, endOffset] = [endOffset, startOffset]; }
 
                 } catch (e) {
-                    console.error("CS: Error using caretPositionFromPoint within intersection", e);
-                    continue;
+                    console.warn("CS: Error during caret point calculation, using full node", e);
+                    startOffset = 0;
+                    endOffset = node.nodeValue.length;
                 }
 
                 if (startOffset < endOffset) {
