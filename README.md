@@ -3,3 +3,23 @@
 A Chrome extension allowing you to copy text from any rectangular area on a webpage by simply clicking and dragging. Useful for complex layouts, tables, or areas where standard text selection is difficult or doesn't capture the desired content accurately.
 
 **[Install from the Chrome Web Store](https://chromewebstore.google.com/detail/dfngjfboeobeiplbhcajljldomfpabac)**
+
+Click the extension icon, then drag a rectangle over the text to copy. Hold **Alt** to preserve spacing temporarily, or enable it in the extension options. Press **Escape** to cancel. Requires Chrome 102 or later.
+
+Try the local version with Python 3 and Chromium installed:
+
+```sh
+python3 try.py
+```
+
+This opens a separate Chromium window with the extension loaded and a practice page containing columns, a table, an iframe, and a paste box. Open the puzzle-piece menu and click **Freeform Text Copy**, then drag over the sample text. Close the window or press Ctrl+C in the terminal to stop. The temporary browser profile is removed on exit.
+
+To use your own Chrome browser, run `python3 try.py --serve-only`. Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select this repository folder. Then visit the practice URL printed in the terminal. After changing extension files, click **Reload** on its extension card and refresh the practice page.
+
+Run the regression suite with Python 3 and Chromium installed:
+
+```sh
+python3 tests/run.py
+```
+
+The suite checks text extraction and selection state, then loads a temporary extension copy to verify native clipboard copying and frame messaging on an HTTP page.

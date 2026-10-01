@@ -1,27 +1,14 @@
-.freeform-selection-box-internal {
-  position: absolute;
-  border: 2px dashed #007bff;
-  background-color: rgba(0, 123, 255, 0.1);
-  z-index: 2147483646;
-  pointer-events: none;
-  box-sizing: border-box;
-  display: none;
-}
-
-.freeform-selection-box-internal.preserve-layout {
-  border-color: #28a745;
-  background-color: rgba(40, 167, 69, 0.1);
-  border-style: solid;
-}
-
-body.selection-active {
-  cursor: crosshair !important;
-}
-
+body.selection-active,
 body.selection-active a,
 body.selection-active button,
 body.selection-active input,
 body.selection-active textarea,
 body.selection-active select {
-   cursor: crosshair !important;
+  cursor: crosshair !important;
+}
+
+body.cs-prevent-select,
+body.cs-prevent-select * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
 }
