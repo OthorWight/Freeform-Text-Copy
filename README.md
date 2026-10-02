@@ -33,3 +33,13 @@ python3 tests/run.py
 ```
 
 The suite checks text extraction and selection state, then loads a temporary extension copy to verify native clipboard copying and frame messaging on an HTTP page.
+
+Version 2.0.1 removes the unused `scripting` permission reported in the Chrome Web Store rejection and removes `activeTab` by activating selection with only the tab ID. The remaining access is used as follows:
+
+| Access | Purpose |
+| --- | --- |
+| `clipboardWrite` | Copies the selected text, including the clipboard fallback on HTTP pages. |
+| `storage` | Saves the layout preference in `storage.sync` and coordinates per-tab selection and frame ownership in `storage.session`. |
+| Content scripts matching `<all_urls>` with `all_frames` | Supports selecting text on arbitrary webpages and in cross-origin frames. Scripts wait for toolbar activation before enabling selection. Local files require the user's **Allow access to file URLs** setting. |
+
+For resubmission, upload `dist/freeform-text-copy-2.0.1.zip` and update the dashboard's permission justifications to match this table. No `scripting`, `activeTab`, `tabs`, or clipboard-reading permission is requested by the release. The integration suite adds `clipboardRead` only to its temporary test copy so it can verify copied text.

@@ -252,6 +252,13 @@ async function run() {
         contentMessageListener({ action: 'setSelectionAvailability', available: true });
         assert(canThisFrameListenForMouseDown);
     });
+    await test('toolbar toggles using only the tab ID', async () => {
+        const bg = createBackground();
+        await bg.handlers.click({ id: 1 });
+        equal((await bg.message('getSelectionAvailability')).available, true);
+        await bg.handlers.click({ id: 1 });
+        equal((await bg.message('getSelectionAvailability')).available, false);
+    });
     await test('worker restart preserves toolbar toggle state', async () => {
         const storage = {}; let bg = createBackground(storage);
         await bg.handlers.click({ id: 1, url: 'https://example.test' });
@@ -294,7 +301,7 @@ async function run() {
     });
     await test('failed activation delivery does not leave an active tab', async () => {
         const bg = createBackground(); bg.api.tabs.sendMessage = async () => { throw new Error('no receiver'); };
-        await bg.handlers.click({ id: 1, url: 'https://example.test' });
+        await bg.handlers.click({ id: 1 });
         equal((await bg.message('getSelectionAvailability')).available, false);
     });
     await test('tab closure clears persisted state', async () => {

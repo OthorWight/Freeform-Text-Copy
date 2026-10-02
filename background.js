@@ -25,15 +25,18 @@ async function broadcast(tabId, message) {
     }
 }
 
-chrome.action.onClicked.addListener(tab => {
-    if (tab.id === undefined || !/^(https?|file):/.test(tab.url || '')) return;
+function toggleSelection(tab) {
+    // Messaging needs only the tab ID; unavailable content scripts are handled by broadcast.
+    if (tab.id === undefined) return;
     return withTabState(tab.id, async (state, key) => {
         const enabled = !state.enabled;
         await chrome.storage.session.set({ [key]: { enabled, selection: null } });
         const delivered = await broadcast(tab.id, { action: 'setSelectionAvailability', available: enabled });
         if (!delivered) await chrome.storage.session.remove(key);
     }).catch(() => {});
-});
+}
+
+chrome.action.onClicked.addListener(toggleSelection);
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const tabId = sender.tab?.id;

@@ -73,10 +73,12 @@ def run_extension_checks(browser, directory, manifest):
 // Test-only activation hook in the temporary extension copy.
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action !== 'testActivate' || sender.tab?.id === undefined) return;
-    withTabState(sender.tab.id, async (_state, key) => {
-        await chrome.storage.session.set({ [key]: { enabled: true, selection: null } });
-        await broadcast(sender.tab.id, { action: 'setSelectionAvailability', available: true });
-    }).then(() => sendResponse({ activated: true }), () => sendResponse({ activated: false }));
+    // Exercise the production toolbar handler without access to the tab URL.
+    toggleSelection({ id: sender.tab.id }).then(async () => {
+        const key = `selection-tab-${sender.tab.id}`;
+        const stored = await chrome.storage.session.get(key);
+        sendResponse({ activated: stored[key]?.enabled === true });
+    }, () => sendResponse({ activated: false }));
     return true;
 });
 ''')

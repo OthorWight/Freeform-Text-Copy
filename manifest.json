@@ -2,11 +2,9 @@
   "manifest_version": 3,
   "minimum_chrome_version": "102",
   "name": "Freeform Text Copy",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Click icon, then draw a box in any frame to select and copy text within that frame.",
   "permissions": [
-    "activeTab",
-    "scripting",
     "clipboardWrite",
     "storage"
   ],
