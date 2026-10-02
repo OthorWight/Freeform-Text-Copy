@@ -6,6 +6,16 @@ A Chrome extension allowing you to copy text from any rectangular area on a webp
 
 Click the extension icon, then drag a rectangle over the text to copy. Hold **Alt** to preserve spacing temporarily, or enable it in the extension options. Press **Escape** to cancel. Requires Chrome 102 or later.
 
+Package the extension for the Chrome Web Store with Python 3 (no extra dependencies):
+
+```sh
+python3 package.py
+```
+
+This creates `dist/freeform-text-copy-<version>.zip`, using the version in `manifest.json`. It includes the extension files and license, with `manifest.json` at the ZIP root, and excludes tests, demos, and development files. The script works from any working directory when invoked by its path. If you add extension assets, update `PACKAGE_FILES` in `package.py`.
+
+Upload the ZIP in the [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole). For an update to an existing listing, increase `version` in `manifest.json` before packaging. See Chrome's [publishing instructions](https://developer.chrome.com/docs/webstore/publish) for the remaining listing and review steps.
+
 Try the local version with Python 3 and Chromium installed:
 
 ```sh
